@@ -21,6 +21,11 @@ type StartConversationParams struct {
 	// context of conversations the agent has had with this customer.
 	CustomerID string `json:"customer_id"`
 
+	// CustomerSupportPlatformIdentifiers optionally links the customer to
+	// their record(s) in third-party support platforms (e.g. Intercom,
+	// Zendesk), alongside CustomerID.
+	CustomerSupportPlatformIdentifiers []*CustomerSupportPlatformIdentifier `json:"customer_support_platform_identifiers,omitempty"`
+
 	// AssigneeID optionally identifies who the conversation is assigned to.
 	AssigneeID string `json:"assignee_id,omitempty"`
 
