@@ -1,3 +1,3 @@
 package client
 
-const version = "0.3.0"
+const version = "0.3.1"
