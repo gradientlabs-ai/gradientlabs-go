@@ -89,7 +89,9 @@ func run(client *glabs.Client) error {
 		return err
 	}
 
-	if err := client.FinishConversation(ctx, conv.ID, glabs.FinishParams{}); err != nil {
+	if err := client.FinishConversation(ctx, conv.ID, glabs.FinishParams{
+		ReasonCode: "customer-ended-chat",
+	}); err != nil {
 		return err
 	}
 
