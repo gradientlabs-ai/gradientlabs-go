@@ -14,6 +14,10 @@ type FinishParams struct {
 
 	// Reason optionally allows you to describe why this conversation is finishing.
 	Reason string `json:"reason,omitempty"`
+
+	// ReasonCode optionally categorises why this conversation is finishing.
+	// Valid values are "customer-ended-chat" and "customer-unresponsive".
+	ReasonCode string `json:"reason_code,omitempty"`
 }
 
 // FinishConversation finishes a conversation.
