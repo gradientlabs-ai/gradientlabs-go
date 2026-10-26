@@ -29,8 +29,8 @@ type Client struct {
 
 // NewClient creates a client with the given options.
 //
-// Note: exactly one of the WithAPIKey or WithOAuthClientCredentials options is
-// required, as is WithWebhookSigningKey if you intend to receive webhooks.
+// Note: to call the API, set either WithAPIKey or WithOAuthClientCredentials.
+// WithWebhookSigningKey is required if you intend to receive webhooks.
 func NewClient(opts ...Option) (*Client, error) {
 	c := &Client{
 		url:        defaultURL,
@@ -41,7 +41,7 @@ func NewClient(opts ...Option) (*Client, error) {
 	}
 
 	var oauth *oauthClientCredentialsOption
-	var oauthTokenURL string
+	var oauthTokenURL *string
 	for _, opt := range opts {
 		switch t := opt.(type) {
 		case urlOption:
@@ -51,7 +51,7 @@ func NewClient(opts ...Option) (*Client, error) {
 		case oauthClientCredentialsOption:
 			oauth = &t
 		case oauthTokenURLOption:
-			oauthTokenURL = t.url
+			oauthTokenURL = &t.url
 		case transportOption:
 			c.httpClient.Transport = t.transport
 		case webhookSigningKeyOption:
@@ -62,7 +62,7 @@ func NewClient(opts ...Option) (*Client, error) {
 	}
 
 	if oauth == nil {
-		if oauthTokenURL != "" {
+		if oauthTokenURL != nil {
 			return nil, errors.New("WithOAuthTokenURL requires WithOAuthClientCredentials")
 		}
 		return c, nil
@@ -70,11 +70,18 @@ func NewClient(opts ...Option) (*Client, error) {
 	if c.apiKey != "" {
 		return nil, errors.New("use either WithAPIKey or WithOAuthClientCredentials, not both")
 	}
-	if oauthTokenURL == "" {
-		oauthTokenURL = defaultOAuthTokenURL
+	if oauth.clientID == "" || oauth.clientSecret == "" {
+		return nil, errors.New("WithOAuthClientCredentials requires a client ID and secret")
+	}
+	tokenURL := defaultOAuthTokenURL
+	if oauthTokenURL != nil {
+		if *oauthTokenURL == "" {
+			return nil, errors.New("WithOAuthTokenURL requires a URL")
+		}
+		tokenURL = *oauthTokenURL
 	}
 	c.oauthTokenSource = &oauthTokenSource{
-		tokenURL:     oauthTokenURL,
+		tokenURL:     tokenURL,
 		clientID:     oauth.clientID,
 		clientSecret: oauth.clientSecret,
 		httpClient:   c.httpClient,
@@ -108,7 +115,8 @@ func WithOAuthClientCredentials(clientID, clientSecret string) Option {
 }
 
 // WithOAuthTokenURL overrides the default URL that access tokens are fetched
-// from when using WithOAuthClientCredentials.
+// from when using WithOAuthClientCredentials. If you use WithURL to call a
+// different API URL, set the token URL that goes with it too.
 func WithOAuthTokenURL(url string) Option {
 	return oauthTokenURLOption{url}
 }
