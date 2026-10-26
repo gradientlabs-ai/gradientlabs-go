@@ -18,6 +18,28 @@ go get github.com/gradientlabs-ai/gradientlabs-go
 - [API Documentation](https://api-docs.gradient-labs.ai)
 - [Go Package Reference](https://pkg.go.dev/github.com/gradientlabs-ai/gradientlabs-go)
 
+## Authentication
+
+Authenticate with either an API key or an OAuth client. Create both in the API settings of the Gradient Labs dashboard.
+
+```go
+// With an API key
+client, err := glabs.NewClient(
+    glabs.WithAPIKey(os.Getenv("GLABS_API_KEY")),
+)
+
+// Or with an OAuth client. The client fetches short-lived access tokens with
+// the OAuth 2.0 client credentials grant and renews them before they expire.
+client, err := glabs.NewClient(
+    glabs.WithOAuthClientCredentials(
+        os.Getenv("GLABS_CLIENT_ID"),
+        os.Getenv("GLABS_CLIENT_SECRET"),
+    ),
+)
+```
+
+Tokens come from `https://id.gradient-labs.ai/oauth2/token` by default. Use `glabs.WithOAuthTokenURL` to set the token URL shown in the dashboard if it differs.
+
 ## Example Usage
 
 ### Starting a Conversation
