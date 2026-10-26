@@ -17,7 +17,7 @@ const (
 
 	// defaultTokenLifetime is assumed when the token response has no
 	// expires_in.
-	defaultTokenLifetime = 5 * time.Minute
+	defaultTokenLifetime = 30 * time.Minute
 
 	tokenRequestTimeout = 30 * time.Second
 )

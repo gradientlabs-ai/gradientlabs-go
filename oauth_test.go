@@ -139,8 +139,9 @@ func TestOAuthTokenWithoutExpiresIn(t *testing.T) {
 	c.oauthTokenSource.now = func() time.Time { return now }
 
 	ctx := context.Background()
+	// The default 30 minute lifetime is renewed a minute early, at 29 minutes.
 	var got []string
-	for _, step := range []time.Duration{0, 4*time.Minute - time.Second, 2 * time.Second} {
+	for _, step := range []time.Duration{0, 29*time.Minute - time.Second, 2 * time.Second} {
 		now = now.Add(step)
 		token, err := c.oauthTokenSource.token(ctx)
 		if err != nil {
