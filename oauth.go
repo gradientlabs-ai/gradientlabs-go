@@ -30,8 +30,11 @@ type oauthTokenSource struct {
 	tokenURL     string
 	clientID     string
 	clientSecret string
-	httpClient   *http.Client
-	now          func() time.Time
+	// signer, when set, authenticates each token request with a freshly
+	// signed client assertion instead of clientSecret.
+	signer     *assertionSigner
+	httpClient *http.Client
+	now        func() time.Time
 
 	mu          sync.Mutex
 	accessToken string
@@ -99,7 +102,16 @@ func (s *oauthTokenSource) request(ctx context.Context) (string, time.Duration, 
 	form := url.Values{}
 	form.Set("grant_type", "client_credentials")
 	form.Set("client_id", s.clientID)
-	form.Set("client_secret", s.clientSecret)
+	if s.signer != nil {
+		assertion, err := s.signer.sign(s.now())
+		if err != nil {
+			return "", 0, fmt.Errorf("oauth token request: %w", err)
+		}
+		form.Set("client_assertion_type", clientAssertionType)
+		form.Set("client_assertion", assertion)
+	} else {
+		form.Set("client_secret", s.clientSecret)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {

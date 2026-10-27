@@ -40,6 +40,16 @@ client, err := glabs.NewClient(
 
 Tokens come from `https://id.gradient-labs.ai/oauth2/token` by default. Use `glabs.WithOAuthTokenURL` to set the token URL shown in the dashboard if it differs.
 
+An OAuth client can authenticate with a private key instead of a secret (`private_key_jwt`). Register its public key in the dashboard, then pass the client ID, the private key and, if the client has several keys, the key's `kid`:
+
+```go
+client, err := glabs.NewClient(
+    glabs.WithOAuthPrivateKeyJWT(os.Getenv("GLABS_CLIENT_ID"), privateKey, "my-key-id"),
+)
+```
+
+`privateKey` is an EC P-256, Ed25519 or RSA key, or any `crypto.Signer`. The client signs a fresh assertion for each token request, and fetches tokens from `https://api.gradient-labs.ai/oauth/token`. For an RSA key registered for PS256, add `glabs.WithOAuthAssertionAlgorithm(glabs.AlgorithmPS256)`.
+
 ## Example Usage
 
 ### Starting a Conversation

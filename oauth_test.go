@@ -316,12 +316,12 @@ func TestNewClientAuthOptionErrors(t *testing.T) {
 		{
 			name:    "API key and OAuth client credentials",
 			opts:    []Option{WithAPIKey("sk_123"), WithOAuthClientCredentials("client_123", "secret")},
-			wantErr: "use either WithAPIKey or WithOAuthClientCredentials, not both",
+			wantErr: "use either WithAPIKey or an OAuth client, not both",
 		},
 		{
 			name:    "token URL without OAuth client credentials",
 			opts:    []Option{WithAPIKey("sk_123"), WithOAuthTokenURL("https://example.com/token")},
-			wantErr: "WithOAuthTokenURL requires WithOAuthClientCredentials",
+			wantErr: "WithOAuthTokenURL requires WithOAuthClientCredentials or WithOAuthPrivateKeyJWT",
 		},
 		{
 			name:    "empty client ID",

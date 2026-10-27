@@ -6,12 +6,14 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -29,7 +31,8 @@ type Client struct {
 
 // NewClient creates a client with the given options.
 //
-// Note: to call the API, set either WithAPIKey or WithOAuthClientCredentials.
+// Note: to call the API, set one of WithAPIKey, WithOAuthClientCredentials or
+// WithOAuthPrivateKeyJWT.
 // WithWebhookSigningKey is required if you intend to receive webhooks.
 func NewClient(opts ...Option) (*Client, error) {
 	c := &Client{
@@ -41,6 +44,8 @@ func NewClient(opts ...Option) (*Client, error) {
 	}
 
 	var oauth *oauthClientCredentialsOption
+	var privateKey *oauthPrivateKeyJWTOption
+	var assertionAlgorithm string
 	var oauthTokenURL *string
 	for _, opt := range opts {
 		switch t := opt.(type) {
@@ -50,6 +55,10 @@ func NewClient(opts ...Option) (*Client, error) {
 			c.apiKey = t.apiKey
 		case oauthClientCredentialsOption:
 			oauth = &t
+		case oauthPrivateKeyJWTOption:
+			privateKey = &t
+		case oauthAssertionAlgorithmOption:
+			assertionAlgorithm = t.alg
 		case oauthTokenURLOption:
 			oauthTokenURL = &t.url
 		case transportOption:
@@ -61,23 +70,50 @@ func NewClient(opts ...Option) (*Client, error) {
 		}
 	}
 
-	if oauth == nil {
+	if assertionAlgorithm != "" && privateKey == nil {
+		return nil, errors.New("WithOAuthAssertionAlgorithm requires WithOAuthPrivateKeyJWT")
+	}
+	if oauth == nil && privateKey == nil {
 		if oauthTokenURL != nil {
-			return nil, errors.New("WithOAuthTokenURL requires WithOAuthClientCredentials")
+			return nil, errors.New("WithOAuthTokenURL requires WithOAuthClientCredentials or WithOAuthPrivateKeyJWT")
 		}
 		return c, nil
 	}
-	if c.apiKey != "" {
-		return nil, errors.New("use either WithAPIKey or WithOAuthClientCredentials, not both")
+	if oauth != nil && privateKey != nil {
+		return nil, errors.New("use either WithOAuthClientCredentials or WithOAuthPrivateKeyJWT, not both")
 	}
+	if c.apiKey != "" {
+		return nil, errors.New("use either WithAPIKey or an OAuth client, not both")
+	}
+	if oauthTokenURL != nil && *oauthTokenURL == "" {
+		return nil, errors.New("WithOAuthTokenURL requires a URL")
+	}
+
+	if privateKey != nil {
+		issuer := strings.TrimSuffix(c.url, "/") + oauthIssuerPath
+		signer, err := newAssertionSigner(*privateKey, assertionAlgorithm, issuer)
+		if err != nil {
+			return nil, err
+		}
+		tokenURL := issuer + "/token"
+		if oauthTokenURL != nil {
+			tokenURL = *oauthTokenURL
+		}
+		c.oauthTokenSource = &oauthTokenSource{
+			tokenURL:   tokenURL,
+			clientID:   privateKey.clientID,
+			signer:     signer,
+			httpClient: c.httpClient,
+			now:        time.Now,
+		}
+		return c, nil
+	}
+
 	if oauth.clientID == "" || oauth.clientSecret == "" {
 		return nil, errors.New("WithOAuthClientCredentials requires a client ID and secret")
 	}
 	tokenURL := defaultOAuthTokenURL
 	if oauthTokenURL != nil {
-		if *oauthTokenURL == "" {
-			return nil, errors.New("WithOAuthTokenURL requires a URL")
-		}
 		tokenURL = *oauthTokenURL
 	}
 	c.oauthTokenSource = &oauthTokenSource{
@@ -114,9 +150,28 @@ func WithOAuthClientCredentials(clientID, clientSecret string) Option {
 	return oauthClientCredentialsOption{clientID, clientSecret}
 }
 
+// WithOAuthPrivateKeyJWT authenticates with an OAuth client that holds a
+// private key instead of a secret (private_key_jwt, RFC 7523), signing a fresh
+// client assertion for each token request. key is an EC P-256, Ed25519 or RSA
+// key, or a crypto.Signer for one held in a KMS. keyID is the public key's kid,
+// and may be empty when the OAuth client has one key. Tokens come from the API
+// URL plus /oauth/token, so WithURL moves the token URL too.
+func WithOAuthPrivateKeyJWT(clientID string, key crypto.Signer, keyID string) Option {
+	return oauthPrivateKeyJWTOption{clientID, key, keyID}
+}
+
+// WithOAuthAssertionAlgorithm sets the algorithm WithOAuthPrivateKeyJWT signs
+// with. It only needs setting for an RSA key registered for PS256 (use
+// AlgorithmPS256); otherwise the algorithm follows from the key: ES256 for EC
+// P-256, EdDSA for Ed25519 and RS256 for RSA.
+func WithOAuthAssertionAlgorithm(alg string) Option {
+	return oauthAssertionAlgorithmOption{alg}
+}
+
 // WithOAuthTokenURL overrides the default URL that access tokens are fetched
-// from when using WithOAuthClientCredentials. If you use WithURL to call a
-// different API URL, set the token URL that goes with it too.
+// from when using WithOAuthClientCredentials or WithOAuthPrivateKeyJWT. If you
+// use WithURL to call a different API URL with WithOAuthClientCredentials, set
+// the token URL that goes with it too.
 func WithOAuthTokenURL(url string) Option {
 	return oauthTokenURLOption{url}
 }
@@ -137,17 +192,25 @@ type urlOption struct{ url string }
 type transportOption struct{ transport http.RoundTripper }
 type apiKeyOption struct{ apiKey string }
 type oauthClientCredentialsOption struct{ clientID, clientSecret string }
+type oauthPrivateKeyJWTOption struct {
+	clientID string
+	key      crypto.Signer
+	keyID    string
+}
+type oauthAssertionAlgorithmOption struct{ alg string }
 type oauthTokenURLOption struct{ url string }
 type webhookSigningKeyOption struct{ signingKey []byte }
 type webhookLeewayOption struct{ leeway time.Duration }
 
-func (urlOption) isClientOption()                    {}
-func (transportOption) isClientOption()              {}
-func (apiKeyOption) isClientOption()                 {}
-func (oauthClientCredentialsOption) isClientOption() {}
-func (oauthTokenURLOption) isClientOption()          {}
-func (webhookSigningKeyOption) isClientOption()      {}
-func (webhookLeewayOption) isClientOption()          {}
+func (urlOption) isClientOption()                     {}
+func (transportOption) isClientOption()               {}
+func (apiKeyOption) isClientOption()                  {}
+func (oauthClientCredentialsOption) isClientOption()  {}
+func (oauthPrivateKeyJWTOption) isClientOption()      {}
+func (oauthAssertionAlgorithmOption) isClientOption() {}
+func (oauthTokenURLOption) isClientOption()           {}
+func (webhookSigningKeyOption) isClientOption()       {}
+func (webhookLeewayOption) isClientOption()           {}
 
 // Option customises the Client.
 type Option interface{ isClientOption() }
