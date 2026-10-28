@@ -45,7 +45,8 @@ func NewClient(opts ...Option) (*Client, error) {
 
 	var oauth *oauthClientCredentialsOption
 	var privateKey *oauthPrivateKeyJWTOption
-	var assertionAlgorithm string
+	var assertionAlgorithm *AssertionAlgorithm
+	var oauthAudience *string
 	var oauthTokenURL *string
 	for _, opt := range opts {
 		switch t := opt.(type) {
@@ -58,7 +59,9 @@ func NewClient(opts ...Option) (*Client, error) {
 		case oauthPrivateKeyJWTOption:
 			privateKey = &t
 		case oauthAssertionAlgorithmOption:
-			assertionAlgorithm = t.alg
+			assertionAlgorithm = &t.alg
+		case oauthAudienceOption:
+			oauthAudience = &t.audience
 		case oauthTokenURLOption:
 			oauthTokenURL = &t.url
 		case transportOption:
@@ -70,8 +73,17 @@ func NewClient(opts ...Option) (*Client, error) {
 		}
 	}
 
-	if assertionAlgorithm != "" && privateKey == nil {
+	if assertionAlgorithm != nil && privateKey == nil {
 		return nil, errors.New("WithOAuthAssertionAlgorithm requires WithOAuthPrivateKeyJWT")
+	}
+	if assertionAlgorithm != nil && *assertionAlgorithm == "" {
+		return nil, errors.New("WithOAuthAssertionAlgorithm requires an algorithm")
+	}
+	if oauthAudience != nil && privateKey == nil {
+		return nil, errors.New("WithOAuthAudience requires WithOAuthPrivateKeyJWT")
+	}
+	if oauthAudience != nil && *oauthAudience == "" {
+		return nil, errors.New("WithOAuthAudience requires an audience")
 	}
 	if oauth == nil && privateKey == nil {
 		if oauthTokenURL != nil {
@@ -89,9 +101,24 @@ func NewClient(opts ...Option) (*Client, error) {
 		return nil, errors.New("WithOAuthTokenURL requires a URL")
 	}
 
+	tokenHTTPClient := &http.Client{
+		Transport: c.httpClient.Transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
 	if privateKey != nil {
 		issuer := strings.TrimSuffix(c.url, "/") + oauthIssuerPath
-		signer, err := newAssertionSigner(*privateKey, assertionAlgorithm, issuer)
+		audience := issuer
+		if oauthAudience != nil {
+			audience = *oauthAudience
+		}
+		var alg AssertionAlgorithm
+		if assertionAlgorithm != nil {
+			alg = *assertionAlgorithm
+		}
+		signer, err := newAssertionSigner(*privateKey, alg, audience)
 		if err != nil {
 			return nil, err
 		}
@@ -100,11 +127,12 @@ func NewClient(opts ...Option) (*Client, error) {
 			tokenURL = *oauthTokenURL
 		}
 		c.oauthTokenSource = &oauthTokenSource{
-			tokenURL:   tokenURL,
-			clientID:   privateKey.clientID,
-			signer:     signer,
-			httpClient: c.httpClient,
-			now:        time.Now,
+			tokenURL:       tokenURL,
+			clientID:       privateKey.clientID,
+			signer:         signer,
+			httpClient:     tokenHTTPClient,
+			now:            time.Now,
+			requestTimeout: tokenRequestTimeout,
 		}
 		return c, nil
 	}
@@ -117,11 +145,12 @@ func NewClient(opts ...Option) (*Client, error) {
 		tokenURL = *oauthTokenURL
 	}
 	c.oauthTokenSource = &oauthTokenSource{
-		tokenURL:     tokenURL,
-		clientID:     oauth.clientID,
-		clientSecret: oauth.clientSecret,
-		httpClient:   c.httpClient,
-		now:          time.Now,
+		tokenURL:       tokenURL,
+		clientID:       oauth.clientID,
+		clientSecret:   oauth.clientSecret,
+		httpClient:     tokenHTTPClient,
+		now:            time.Now,
+		requestTimeout: tokenRequestTimeout,
 	}
 	return c, nil
 }
@@ -153,9 +182,9 @@ func WithOAuthClientCredentials(clientID, clientSecret string) Option {
 // WithOAuthPrivateKeyJWT authenticates with an OAuth client that holds a
 // private key instead of a secret (private_key_jwt, RFC 7523), signing a fresh
 // client assertion for each token request. key is an EC P-256, Ed25519 or RSA
-// key, or a crypto.Signer for one held in a KMS. keyID is the public key's kid,
-// and may be empty when the OAuth client has one key. Tokens come from the API
-// URL plus /oauth/token, so WithURL moves the token URL too.
+// (2048 bits or more) private key, or a crypto.Signer for one held in a KMS.
+// keyID is the public key's kid, and may be empty when the OAuth client has one
+// key. Tokens come from the API URL plus /oauth/token, so WithURL moves it too.
 func WithOAuthPrivateKeyJWT(clientID string, key crypto.Signer, keyID string) Option {
 	return oauthPrivateKeyJWTOption{clientID, key, keyID}
 }
@@ -164,14 +193,22 @@ func WithOAuthPrivateKeyJWT(clientID string, key crypto.Signer, keyID string) Op
 // with. It only needs setting for an RSA key registered for PS256 (use
 // AlgorithmPS256); otherwise the algorithm follows from the key: ES256 for EC
 // P-256, EdDSA for Ed25519 and RS256 for RSA.
-func WithOAuthAssertionAlgorithm(alg string) Option {
+func WithOAuthAssertionAlgorithm(alg AssertionAlgorithm) Option {
 	return oauthAssertionAlgorithmOption{alg}
+}
+
+// WithOAuthAudience overrides the aud of the client assertions that
+// WithOAuthPrivateKeyJWT signs. It defaults to the API URL plus /oauth, so it
+// only needs setting when WithURL is not the API's own URL, for example a proxy.
+func WithOAuthAudience(audience string) Option {
+	return oauthAudienceOption{audience}
 }
 
 // WithOAuthTokenURL overrides the default URL that access tokens are fetched
 // from when using WithOAuthClientCredentials or WithOAuthPrivateKeyJWT. If you
 // use WithURL to call a different API URL with WithOAuthClientCredentials, set
-// the token URL that goes with it too.
+// the token URL that goes with it too. With WithOAuthPrivateKeyJWT it doesn't
+// change the assertions' aud; see WithOAuthAudience.
 func WithOAuthTokenURL(url string) Option {
 	return oauthTokenURLOption{url}
 }
@@ -197,7 +234,8 @@ type oauthPrivateKeyJWTOption struct {
 	key      crypto.Signer
 	keyID    string
 }
-type oauthAssertionAlgorithmOption struct{ alg string }
+type oauthAssertionAlgorithmOption struct{ alg AssertionAlgorithm }
+type oauthAudienceOption struct{ audience string }
 type oauthTokenURLOption struct{ url string }
 type webhookSigningKeyOption struct{ signingKey []byte }
 type webhookLeewayOption struct{ leeway time.Duration }
@@ -208,6 +246,7 @@ func (apiKeyOption) isClientOption()                  {}
 func (oauthClientCredentialsOption) isClientOption()  {}
 func (oauthPrivateKeyJWTOption) isClientOption()      {}
 func (oauthAssertionAlgorithmOption) isClientOption() {}
+func (oauthAudienceOption) isClientOption()           {}
 func (oauthTokenURLOption) isClientOption()           {}
 func (webhookSigningKeyOption) isClientOption()       {}
 func (webhookLeewayOption) isClientOption()           {}
@@ -243,7 +282,11 @@ func (c *Client) makeRequest(ctx context.Context, method string, path string, bo
 		req.Header.Add("Content-Type", "application/json")
 	}
 
-	return c.httpClient.Do(req)
+	rsp, err := c.httpClient.Do(req)
+	if err == nil && rsp.StatusCode == http.StatusUnauthorized && c.oauthTokenSource != nil {
+		c.oauthTokenSource.invalidate(token)
+	}
+	return rsp, err
 }
 
 func (c *Client) bearerToken(ctx context.Context) (string, error) {

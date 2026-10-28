@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -22,6 +23,18 @@ type tokenServer struct {
 	// then wait for release before answering.
 	started chan struct{}
 	release chan struct{}
+
+	mu sync.Mutex
+	// failStatus, when set, answers every request with that status, a
+	// temporarily_unavailable error and failRetryAfter as Retry-After.
+	failStatus     int
+	failRetryAfter string
+}
+
+func (ts *tokenServer) failWith(status int, retryAfter string) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	ts.failStatus, ts.failRetryAfter = status, retryAfter
 }
 
 func newTokenServer(t *testing.T) *tokenServer {
@@ -42,6 +55,17 @@ func newTokenServer(t *testing.T) *tokenServer {
 			return
 		}
 		n := atomic.AddInt32(&ts.requests, 1)
+		ts.mu.Lock()
+		failStatus, failRetryAfter := ts.failStatus, ts.failRetryAfter
+		ts.mu.Unlock()
+		if failStatus != 0 {
+			if failRetryAfter != "" {
+				w.Header().Set("Retry-After", failRetryAfter)
+			}
+			w.WriteHeader(failStatus)
+			fmt.Fprint(w, `{"error":"temporarily_unavailable","error_description":"Try again later."}`)
+			return
+		}
 		if ts.started != nil {
 			ts.started <- struct{}{}
 			<-ts.release
@@ -345,5 +369,186 @@ func TestNewClientAuthOptionErrors(t *testing.T) {
 				t.Errorf("err = %v, want %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestOAuthTokenWaitsBeforeRetryingAFailure(t *testing.T) {
+	tokens := newTokenServer(t)
+	tokens.failWith(http.StatusServiceUnavailable, "")
+	c := newOAuthClient(t, tokens.URL)
+	src := c.oauthTokenSource
+	now := time.Now()
+	src.now = func() time.Time { return now }
+	ctx := context.Background()
+
+	// The delay doubles with each failure in a row: 1s, then 2s.
+	for _, step := range []struct {
+		advance  time.Duration
+		requests int32
+	}{
+		{0, 1},
+		{0, 1},
+		{time.Second + time.Millisecond, 2},
+		{time.Second, 2},
+		{time.Second + time.Millisecond, 3},
+	} {
+		now = now.Add(step.advance)
+		_, err := src.token(ctx)
+		var te *OAuthTokenError
+		if !errors.As(err, &te) || te.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("err = %v, want the 503 as *OAuthTokenError", err)
+		}
+		if got := tokens.requestCount(); got != step.requests {
+			t.Fatalf("token requests = %d, want %d", got, step.requests)
+		}
+	}
+
+	tokens.failWith(0, "")
+	now = now.Add(5 * time.Second)
+	if token, err := src.token(ctx); err != nil || token != "token-4" {
+		t.Errorf("token, err = %q, %v, want token-4 once the token URL recovers", token, err)
+	}
+}
+
+func TestOAuthTokenHonoursRetryAfter(t *testing.T) {
+	tokens := newTokenServer(t)
+	tokens.failWith(http.StatusTooManyRequests, "30")
+	c := newOAuthClient(t, tokens.URL)
+	src := c.oauthTokenSource
+	now := time.Now()
+	src.now = func() time.Time { return now }
+	ctx := context.Background()
+
+	_, err := src.token(ctx)
+	var te *OAuthTokenError
+	if !errors.As(err, &te) || te.RetryAfter != 30*time.Second {
+		t.Fatalf("err = %v, want *OAuthTokenError with RetryAfter 30s", err)
+	}
+	for i := 0; i < 20; i++ {
+		_, _ = src.token(ctx)
+	}
+	now = now.Add(29 * time.Second)
+	_, _ = src.token(ctx)
+	if got := tokens.requestCount(); got != 1 {
+		t.Errorf("token requests within Retry-After = %d, want 1", got)
+	}
+	now = now.Add(2 * time.Second)
+	_, _ = src.token(ctx)
+	if got := tokens.requestCount(); got != 2 {
+		t.Errorf("token requests after Retry-After = %d, want 2", got)
+	}
+}
+
+func TestOAuthTokenFailedRefreshKeepsTheValidToken(t *testing.T) {
+	tokens := newTokenServer(t)
+	c := newOAuthClient(t, tokens.URL)
+	src := c.oauthTokenSource
+	now := time.Now()
+	src.now = func() time.Time { return now }
+	ctx := context.Background()
+
+	if token, err := src.token(ctx); err != nil || token != "token-1" {
+		t.Fatalf("token, err = %q, %v", token, err)
+	}
+
+	// The token lasts 300s and is renewed at 240s. A failed renewal at 250s
+	// still serves it.
+	tokens.failWith(http.StatusServiceUnavailable, "")
+	now = now.Add(250 * time.Second)
+	if token, err := src.token(ctx); err != nil || token != "token-1" {
+		t.Errorf("token, err = %q, %v, want the still-valid token-1", token, err)
+	}
+
+	now = now.Add(51 * time.Second)
+	if _, err := src.token(ctx); err == nil {
+		t.Error("got a token after token-1 expired and the token URL kept failing")
+	}
+	if got := tokens.requestCount(); got != 3 {
+		t.Errorf("token requests = %d, want 3", got)
+	}
+}
+
+func TestOAuthUnauthorizedResponseDropsTheToken(t *testing.T) {
+	tokens := newTokenServer(t)
+	var calls int32
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"message":"Invalid Authorization header."}`)
+			return
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer token-2" {
+			t.Errorf("Authorization = %q, want a new token after the 401", got)
+		}
+		fmt.Fprint(w, `{"id":"conv-1"}`)
+	}))
+	t.Cleanup(api.Close)
+	c := newOAuthClient(t, tokens.URL, WithURL(api.URL))
+
+	ctx := context.Background()
+	_, err := c.ReadConversation(ctx, "conv-1", &ReadParams{})
+	var re *ResponseError
+	if !errors.As(err, &re) || re.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("err = %v, want the API's 401", err)
+	}
+	if _, err := c.ReadConversation(ctx, "conv-1", &ReadParams{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := tokens.requestCount(); got != 2 {
+		t.Errorf("token requests = %d, want 2", got)
+	}
+}
+
+func TestOAuthTokenRequestDoesNotFollowRedirects(t *testing.T) {
+	var elsewhere int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&elsewhere, 1)
+		fmt.Fprint(w, `{"access_token":"other","expires_in":300}`)
+	}))
+	t.Cleanup(other.Close)
+	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(redirecting.Close)
+	c := newOAuthClient(t, redirecting.URL)
+
+	_, err := c.oauthTokenSource.token(context.Background())
+	var te *OAuthTokenError
+	if !errors.As(err, &te) || te.StatusCode != http.StatusTemporaryRedirect {
+		t.Errorf("err = %v, want the 307 as *OAuthTokenError", err)
+	}
+	if got := atomic.LoadInt32(&elsewhere); got != 0 {
+		t.Errorf("the redirect target got %d token requests, want 0", got)
+	}
+}
+
+type panickingTransport struct{}
+
+func (panickingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	panic("transport bug")
+}
+
+func TestOAuthTokenRequestPanicIsAnError(t *testing.T) {
+	c := newOAuthClient(t, "http://127.0.0.1:1/token", WithTransport(panickingTransport{}))
+	_, err := c.oauthTokenSource.token(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "panic: transport bug") {
+		t.Errorf("err = %v, want the transport's panic as an error", err)
+	}
+}
+
+func TestOAuthTokenRequestTimeoutIsNotTheCallersDeadline(t *testing.T) {
+	tokens := newTokenServer(t)
+	tokens.started = make(chan struct{}, 1)
+	tokens.release = make(chan struct{})
+	t.Cleanup(func() { close(tokens.release) })
+	c := newOAuthClient(t, tokens.URL)
+	c.oauthTokenSource.requestTimeout = 50 * time.Millisecond
+
+	_, err := c.oauthTokenSource.token(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "no answer within 50ms") {
+		t.Fatalf("err = %v, want the token request to time out", err)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Error("the internal timeout looks like the caller's own deadline")
 	}
 }

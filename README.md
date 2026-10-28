@@ -48,7 +48,9 @@ client, err := glabs.NewClient(
 )
 ```
 
-`privateKey` is an EC P-256, Ed25519 or RSA key, or any `crypto.Signer`. The client signs a fresh assertion for each token request, and fetches tokens from `https://api.gradient-labs.ai/oauth/token`. For an RSA key registered for PS256, add `glabs.WithOAuthAssertionAlgorithm(glabs.AlgorithmPS256)`.
+`privateKey` is an EC P-256, Ed25519 or RSA (2048 bits or more) private key, or a `crypto.Signer` for one, such as a key held in a KMS. The client signs a fresh assertion for each token request, and fetches tokens from `https://api.gradient-labs.ai/oauth/token`. For an RSA key registered for PS256, add `glabs.WithOAuthAssertionAlgorithm(glabs.AlgorithmPS256)`. If you reach the API through a proxy with `glabs.WithURL`, also set `glabs.WithOAuthAudience("https://api.gradient-labs.ai/oauth")`.
+
+If the token URL refuses a request or is unavailable, the client keeps using a token that is still valid, and waits before asking again: for the response's `Retry-After`, or otherwise for a delay that grows from one second to a minute. The error is an `*OAuthTokenError`. When the API refuses a token with 401, the client drops it and fetches a new one for the next call.
 
 ## Example Usage
 

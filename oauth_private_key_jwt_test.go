@@ -9,15 +9,18 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -27,7 +30,7 @@ import (
 type keyTokenServer struct {
 	*httptest.Server
 	public crypto.PublicKey
-	alg    string
+	alg    AssertionAlgorithm
 
 	mu         sync.Mutex
 	assertions []verifiedAssertion
@@ -39,7 +42,7 @@ type verifiedAssertion struct {
 	claims clientAssertionClaims
 }
 
-func newKeyTokenServer(t *testing.T, public crypto.PublicKey, alg string) *keyTokenServer {
+func newKeyTokenServer(t *testing.T, public crypto.PublicKey, alg AssertionAlgorithm) *keyTokenServer {
 	t.Helper()
 	ks := &keyTokenServer{public: public, alg: alg}
 	ks.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -55,16 +58,23 @@ func newKeyTokenServer(t *testing.T, public crypto.PublicKey, alg string) *keyTo
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		// The rules our token endpoint enforces on the request itself.
 		form := r.PostForm
 		if form.Get("grant_type") != "client_credentials" ||
 			form.Get("client_assertion_type") != clientAssertionType ||
 			form.Get("client_id") != "oauthclient_123" ||
-			form.Has("client_secret") {
-			t.Errorf("unexpected token request form: %v", form)
+			form.Has("client_secret") || form.Has("scope") ||
+			r.Header.Get("Authorization") != "" {
+			t.Errorf("unexpected token request: form %v, Authorization %q", form, r.Header.Get("Authorization"))
+		}
+		for name, values := range form {
+			if len(values) != 1 {
+				t.Errorf("parameter %s sent %d times", name, len(values))
+			}
 		}
 		a, err := verifyClientAssertion(form.Get("client_assertion"), ks.public, ks.alg)
 		if err != nil {
-			w.WriteHeader(http.StatusUnauthorized)
+			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprint(w, `{"error":"invalid_client","error_description":"Client authentication failed."}`)
 			return
 		}
@@ -86,7 +96,7 @@ func (ks *keyTokenServer) received() ([]verifiedAssertion, []string) {
 
 // verifyClientAssertion checks a compact JWS the way a token endpoint would,
 // with the standard library only.
-func verifyClientAssertion(raw string, public crypto.PublicKey, alg string) (verifiedAssertion, error) {
+func verifyClientAssertion(raw string, public crypto.PublicKey, alg AssertionAlgorithm) (verifiedAssertion, error) {
 	var a verifiedAssertion
 	parts := strings.Split(raw, ".")
 	if len(parts) != 3 {
@@ -105,7 +115,7 @@ func verifyClientAssertion(raw string, public crypto.PublicKey, alg string) (ver
 	if err := decode(parts[1], &a.claims); err != nil {
 		return a, err
 	}
-	if a.header["alg"] != alg {
+	if a.header["alg"] != string(alg) {
 		return a, fmt.Errorf("alg %q, want %q", a.header["alg"], alg)
 	}
 	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
@@ -129,7 +139,9 @@ func verifyClientAssertion(raw string, public crypto.PublicKey, alg string) (ver
 			return a, err
 		}
 	case AlgorithmPS256:
-		if err := rsa.VerifyPSS(public.(*rsa.PublicKey), crypto.SHA256, digest[:], sig, nil); err != nil {
+		// RFC 7518 section 3.5 requires the salt to be as long as the hash.
+		opts := &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash, Hash: crypto.SHA256}
+		if err := rsa.VerifyPSS(public.(*rsa.PublicKey), crypto.SHA256, digest[:], sig, opts); err != nil {
 			return a, err
 		}
 	default:
@@ -156,20 +168,25 @@ func newP256Key(t *testing.T) *ecdsa.PrivateKey {
 	return key
 }
 
+// wrappedSigner hides the key's concrete type, as a KMS client's signer does.
+type wrappedSigner struct{ crypto.Signer }
+
 func TestOAuthPrivateKeyJWTKeyTypes(t *testing.T) {
 	_, edKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rsaKey := newRSAKey(t, 2048)
+	ecKey := newP256Key(t)
 
 	for _, tc := range []struct {
 		name string
 		key  crypto.Signer
 		opts []Option
-		alg  string
+		alg  AssertionAlgorithm
 	}{
-		{name: "EC P-256", key: newP256Key(t), alg: AlgorithmES256},
+		{name: "EC P-256", key: ecKey, alg: AlgorithmES256},
+		{name: "EC P-256 behind a wrapping crypto.Signer", key: wrappedSigner{ecKey}, alg: AlgorithmES256},
 		{name: "Ed25519", key: edKey, alg: AlgorithmEdDSA},
 		{name: "RSA", key: rsaKey, alg: AlgorithmRS256},
 		{name: "RSA-PSS", key: rsaKey, opts: []Option{WithOAuthAssertionAlgorithm(AlgorithmPS256)}, alg: AlgorithmPS256},
@@ -204,8 +221,8 @@ func TestOAuthPrivateKeyJWTKeyTypes(t *testing.T) {
 			if want := api.URL + "/oauth"; cl.Audience != want {
 				t.Errorf("aud = %q, want the issuer %q", cl.Audience, want)
 			}
-			if cl.IssuedAt < before.Unix() || cl.ExpiresAt-cl.IssuedAt != 60 {
-				t.Errorf("iat = %d, exp = %d, want a 60s assertion issued now", cl.IssuedAt, cl.ExpiresAt)
+			if cl.IssuedAt < before.Unix() || cl.ExpiresAt-cl.IssuedAt != 300 {
+				t.Errorf("iat = %d, exp = %d, want a 5 minute assertion issued now", cl.IssuedAt, cl.ExpiresAt)
 			}
 			if cl.JWTID == "" {
 				t.Error("jti is empty")
@@ -271,7 +288,7 @@ func TestOAuthPrivateKeyJWTRejected(t *testing.T) {
 	if !errors.As(err, &te) {
 		t.Fatalf("err = %v, want *OAuthTokenError", err)
 	}
-	if te.StatusCode != http.StatusUnauthorized || te.Code != "invalid_client" {
+	if te.StatusCode != http.StatusBadRequest || te.Code != "invalid_client" {
 		t.Errorf("err = %+v", te)
 	}
 	if _, headers := api.received(); len(headers) != 0 {
@@ -304,6 +321,12 @@ func TestOAuthPrivateKeyJWTTokenURL(t *testing.T) {
 			wantTokenURL: "https://proxy.example.com/token",
 			wantAudience: "https://api.gradient-labs.ai/oauth",
 		},
+		{
+			name:         "WithOAuthAudience behind a proxy",
+			opts:         []Option{WithURL("https://egress.example.com/glabs"), WithOAuthAudience("https://api.gradient-labs.ai/oauth")},
+			wantTokenURL: "https://egress.example.com/glabs/oauth/token",
+			wantAudience: "https://api.gradient-labs.ai/oauth",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := NewClient(append(tc.opts, WithOAuthPrivateKeyJWT("oauthclient_123", key, ""))...)
@@ -320,12 +343,105 @@ func TestOAuthPrivateKeyJWTTokenURL(t *testing.T) {
 	}
 }
 
+// fakeSigner is a crypto.Signer for a real P-256 public key whose Sign does
+// whatever the test needs.
+type fakeSigner struct {
+	public crypto.PublicKey
+	sign   func() ([]byte, error)
+	calls  int32
+}
+
+func (f *fakeSigner) Public() crypto.PublicKey { return f.public }
+
+func (f *fakeSigner) Sign(io.Reader, []byte, crypto.SignerOpts) ([]byte, error) {
+	atomic.AddInt32(&f.calls, 1)
+	return f.sign()
+}
+
+func newFakeSignerClient(t *testing.T, sign func() ([]byte, error)) (*Client, *fakeSigner) {
+	t.Helper()
+	signer := &fakeSigner{public: newP256Key(t).Public(), sign: sign}
+	c, err := NewClient(WithURL("http://127.0.0.1:1"), WithOAuthPrivateKeyJWT("oauthclient_123", signer, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c, signer
+}
+
+func TestOAuthPrivateKeyJWTMalformedECDSASignature(t *testing.T) {
+	encode := func(r, s *big.Int, trailing []byte) []byte {
+		der, err := asn1.Marshal(struct{ R, S *big.Int }{r, s})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return append(der, trailing...)
+	}
+	one := big.NewInt(1)
+	for _, tc := range []struct {
+		name string
+		der  []byte
+	}{
+		{"R longer than 32 bytes", encode(new(big.Int).Lsh(one, 260), one, nil)},
+		{"zero S", encode(one, big.NewInt(0), nil)},
+		{"trailing bytes", encode(one, one, []byte{0})},
+		{"not ASN.1", []byte("not a signature")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := newFakeSignerClient(t, func() ([]byte, error) { return tc.der, nil })
+			_, err := c.oauthTokenSource.token(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "ECDSA") {
+				t.Errorf("err = %v, want an ECDSA signature error", err)
+			}
+		})
+	}
+}
+
+func TestOAuthPrivateKeyJWTPanickingSigner(t *testing.T) {
+	c, _ := newFakeSignerClient(t, func() ([]byte, error) { panic("kms client bug") })
+	_, err := c.oauthTokenSource.token(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "signer panicked: kms client bug") {
+		t.Errorf("err = %v, want the signer's panic as an error", err)
+	}
+}
+
+func TestOAuthPrivateKeyJWTHangingSigner(t *testing.T) {
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
+	c, signer := newFakeSignerClient(t, func() ([]byte, error) {
+		<-block
+		return nil, errors.New("released")
+	})
+	src := c.oauthTokenSource
+	src.requestTimeout = 50 * time.Millisecond
+	now := time.Now()
+	src.now = func() time.Time { return now }
+
+	_, err := src.token(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "no answer within 50ms") {
+		t.Fatalf("err = %v, want the token request to time out", err)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Error("the internal timeout looks like the caller's own deadline")
+	}
+
+	// The stuck signer doesn't wedge the token source: after the retry delay
+	// a new token request signs again.
+	now = now.Add(2 * time.Second)
+	if _, err := src.token(context.Background()); err == nil {
+		t.Fatal("second token request succeeded with a hanging signer")
+	}
+	if got := atomic.LoadInt32(&signer.calls); got != 2 {
+		t.Errorf("Sign calls = %d, want 2", got)
+	}
+}
+
 func TestOAuthPrivateKeyJWTOptionErrors(t *testing.T) {
 	p384, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	p256 := newP256Key(t)
+	var typedNil *ecdsa.PrivateKey
 
 	for _, tc := range []struct {
 		name    string
@@ -340,6 +456,11 @@ func TestOAuthPrivateKeyJWTOptionErrors(t *testing.T) {
 		{
 			name:    "no key",
 			opts:    []Option{WithOAuthPrivateKeyJWT("oauthclient_123", nil, "")},
+			wantErr: "WithOAuthPrivateKeyJWT requires a client ID and private key",
+		},
+		{
+			name:    "typed nil key",
+			opts:    []Option{WithOAuthPrivateKeyJWT("oauthclient_123", typedNil, "")},
 			wantErr: "WithOAuthPrivateKeyJWT requires a client ID and private key",
 		},
 		{
@@ -358,9 +479,24 @@ func TestOAuthPrivateKeyJWTOptionErrors(t *testing.T) {
 			wantErr: "algorithm PS256 does not match the private key; use one of [ES256]",
 		},
 		{
+			name:    "empty algorithm",
+			opts:    []Option{WithOAuthPrivateKeyJWT("oauthclient_123", p256, ""), WithOAuthAssertionAlgorithm("")},
+			wantErr: "WithOAuthAssertionAlgorithm requires an algorithm",
+		},
+		{
 			name:    "algorithm without a private key",
 			opts:    []Option{WithOAuthClientCredentials("client_123", "secret"), WithOAuthAssertionAlgorithm(AlgorithmPS256)},
 			wantErr: "WithOAuthAssertionAlgorithm requires WithOAuthPrivateKeyJWT",
+		},
+		{
+			name:    "audience without a private key",
+			opts:    []Option{WithOAuthClientCredentials("client_123", "secret"), WithOAuthAudience("https://api.gradient-labs.ai/oauth")},
+			wantErr: "WithOAuthAudience requires WithOAuthPrivateKeyJWT",
+		},
+		{
+			name:    "empty audience",
+			opts:    []Option{WithOAuthPrivateKeyJWT("oauthclient_123", p256, ""), WithOAuthAudience("")},
+			wantErr: "WithOAuthAudience requires an audience",
 		},
 		{
 			name:    "secret and private key",

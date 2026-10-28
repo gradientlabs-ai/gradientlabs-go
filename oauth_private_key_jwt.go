@@ -21,8 +21,9 @@ const (
 	clientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 
 	// clientAssertionLifetime is how long each signed assertion is valid for.
-	// A fresh one is signed for every token request.
-	clientAssertionLifetime = time.Minute
+	// A fresh one is signed for every token request and each can only be used
+	// once, so a few minutes costs nothing and tolerates a slow client clock.
+	clientAssertionLifetime = 5 * time.Minute
 
 	// oauthIssuerPath is where, under the API URL, the OAuth issuer for
 	// clients that authenticate with a private key lives. Its token endpoint is
@@ -30,13 +31,15 @@ const (
 	oauthIssuerPath = "/oauth"
 )
 
-// Algorithms a client assertion can be signed with. The algorithm must match
-// the one the public key was registered with.
+// AssertionAlgorithm is an algorithm a client assertion can be signed with. It
+// must match the one the public key was registered with.
+type AssertionAlgorithm string
+
 const (
-	AlgorithmES256 = "ES256"
-	AlgorithmEdDSA = "EdDSA"
-	AlgorithmRS256 = "RS256"
-	AlgorithmPS256 = "PS256"
+	AlgorithmES256 AssertionAlgorithm = "ES256"
+	AlgorithmEdDSA AssertionAlgorithm = "EdDSA"
+	AlgorithmRS256 AssertionAlgorithm = "RS256"
+	AlgorithmPS256 AssertionAlgorithm = "PS256"
 )
 
 // assertionSigner signs RFC 7523 client assertions for the private_key_jwt
@@ -45,24 +48,30 @@ type assertionSigner struct {
 	clientID string
 	key      crypto.Signer
 	keyID    string
-	alg      string
-	// audience is our OAuth issuer, which FAPI 2.0 and the RFC 7523 update
-	// require as the assertion's aud in place of the token URL.
+	alg      AssertionAlgorithm
+	// audience is our OAuth issuer by default, which FAPI 2.0 and the RFC 7523
+	// update require as the assertion's aud in place of the token URL.
 	audience string
 }
 
-func newAssertionSigner(o oauthPrivateKeyJWTOption, alg, audience string) (*assertionSigner, error) {
+// newAssertionSigner signs with alg, or with the key's default algorithm when
+// alg is empty.
+func newAssertionSigner(o oauthPrivateKeyJWTOption, alg AssertionAlgorithm, audience string) (*assertionSigner, error) {
 	if o.clientID == "" || o.key == nil {
 		return nil, errors.New("WithOAuthPrivateKeyJWT requires a client ID and private key")
 	}
-	allowed, err := assertionAlgorithms(o.key.Public())
+	public, err := publicKeyOf(o.key)
+	if err != nil {
+		return nil, err
+	}
+	allowed, err := assertionAlgorithms(public)
 	if err != nil {
 		return nil, err
 	}
 	if alg == "" {
 		alg = allowed[0]
 	}
-	if !containsString(allowed, alg) {
+	if !containsAlgorithm(allowed, alg) {
 		return nil, fmt.Errorf("algorithm %s does not match the private key; use one of %v", alg, allowed)
 	}
 	return &assertionSigner{
@@ -74,22 +83,33 @@ func newAssertionSigner(o oauthPrivateKeyJWTOption, alg, audience string) (*asse
 	}, nil
 }
 
+// publicKeyOf returns an error rather than panicking for a typed nil key, such
+// as a nil *ecdsa.PrivateKey passed as a crypto.Signer.
+func publicKeyOf(key crypto.Signer) (public crypto.PublicKey, err error) {
+	defer func() {
+		if recover() != nil {
+			public, err = nil, errors.New("WithOAuthPrivateKeyJWT requires a client ID and private key")
+		}
+	}()
+	return key.Public(), nil
+}
+
 // assertionAlgorithms returns the algorithms a key can sign with, the default
 // first.
-func assertionAlgorithms(public crypto.PublicKey) ([]string, error) {
+func assertionAlgorithms(public crypto.PublicKey) ([]AssertionAlgorithm, error) {
 	switch k := public.(type) {
 	case *ecdsa.PublicKey:
 		if k.Curve != elliptic.P256() {
 			return nil, errors.New("WithOAuthPrivateKeyJWT requires an EC key on the P-256 curve")
 		}
-		return []string{AlgorithmES256}, nil
+		return []AssertionAlgorithm{AlgorithmES256}, nil
 	case ed25519.PublicKey:
-		return []string{AlgorithmEdDSA}, nil
+		return []AssertionAlgorithm{AlgorithmEdDSA}, nil
 	case *rsa.PublicKey:
 		if k.N.BitLen() < 2048 {
 			return nil, errors.New("WithOAuthPrivateKeyJWT requires an RSA key of at least 2048 bits")
 		}
-		return []string{AlgorithmRS256, AlgorithmPS256}, nil
+		return []AssertionAlgorithm{AlgorithmRS256, AlgorithmPS256}, nil
 	default:
 		return nil, fmt.Errorf("WithOAuthPrivateKeyJWT does not support %T keys; use EC P-256, Ed25519 or RSA", public)
 	}
@@ -112,7 +132,7 @@ func (s *assertionSigner) sign(now time.Time) (string, error) {
 		return "", fmt.Errorf("client assertion: generating jti: %w", err)
 	}
 
-	header := map[string]string{"alg": s.alg, "typ": "JWT"}
+	header := map[string]string{"alg": string(s.alg), "typ": "JWT"}
 	if s.keyID != "" {
 		header["kid"] = s.keyID
 	}
@@ -162,8 +182,14 @@ func (s *assertionSigner) signature(input []byte) ([]byte, error) {
 		// crypto.Signer returns an ASN.1 signature, but JWS wants R and S
 		// as two fixed-size big-endian integers.
 		var sig struct{ R, S *big.Int }
-		if _, err := asn1.Unmarshal(der, &sig); err != nil {
+		rest, err := asn1.Unmarshal(der, &sig)
+		if err != nil {
 			return nil, fmt.Errorf("decoding ECDSA signature: %w", err)
+		}
+		// A custom signer's output is checked, as FillBytes panics on an
+		// integer longer than 32 bytes.
+		if len(rest) != 0 || !isP256Scalar(sig.R) || !isP256Scalar(sig.S) {
+			return nil, errors.New("the signer returned a malformed ECDSA P-256 signature")
 		}
 		out := make([]byte, 64)
 		sig.R.FillBytes(out[:32])
@@ -174,7 +200,11 @@ func (s *assertionSigner) signature(input []byte) ([]byte, error) {
 	}
 }
 
-func containsString(values []string, v string) bool {
+func isP256Scalar(n *big.Int) bool {
+	return n != nil && n.Sign() > 0 && n.BitLen() <= 256
+}
+
+func containsAlgorithm(values []AssertionAlgorithm, v AssertionAlgorithm) bool {
 	for _, value := range values {
 		if value == v {
 			return true
