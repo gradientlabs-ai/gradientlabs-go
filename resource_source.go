@@ -35,8 +35,30 @@ type ResourceSource struct {
 	// attribute descriptions if present.
 	Schema *Schema `json:"schema,omitempty"`
 
+	// Managed is set for a source Gradient Labs creates and maintains for an
+	// integration. A managed source can't be edited or deleted.
+	Managed *ManagedResourceSource `json:"managed,omitempty"`
+
+	// AvailableRefreshStrategies lists the refresh strategies a resource type
+	// using this source can choose.
+	AvailableRefreshStrategies []RefreshStrategy `json:"available_refresh_strategies"`
+
+	// AvailableScopes lists the scopes a resource type using this source can
+	// choose.
+	AvailableScopes []Scope `json:"available_scopes"`
+
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`
+}
+
+// ManagedResourceSource describes a resource source that Gradient Labs
+// maintains for an integration.
+type ManagedResourceSource struct {
+	// Enabled is true when the integration is switched on.
+	Enabled bool `json:"enabled"`
+
+	// Key names the integration data this source reads. It never changes.
+	Key string `json:"key"`
 }
 
 type SourceType string

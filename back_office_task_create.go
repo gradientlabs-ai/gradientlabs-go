@@ -13,7 +13,7 @@ type BackOfficeTaskCreateParams struct {
 	ID string `json:"id"`
 
 	// AgentID is the agent (agent group) that runs this task.
-	AgentID string `json:"agent_id,omitempty"`
+	AgentID string `json:"agent_id"`
 
 	// ProcedureID is the procedure within the agent to start the task from.
 	ProcedureID string `json:"procedure_id"`

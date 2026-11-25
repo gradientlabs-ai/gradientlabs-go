@@ -7,3 +7,8 @@ type PaginationInfo struct {
 	// Prev is a cursor to retrieve the previous page of results.
 	Prev *string `json:"prev,omitempty"`
 }
+
+// ForwardPaginationInfo holds the cursor for the next page.
+type ForwardPaginationInfo struct {
+	Next *string `json:"next,omitempty"`
+}

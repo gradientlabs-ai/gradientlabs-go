@@ -30,9 +30,11 @@ func (c *Client) SetProcedureLimit(ctx context.Context, procedureID string, p *P
 		return nil, err
 	}
 
-	var proc Procedure
-	if err := json.NewDecoder(rsp.Body).Decode(&proc); err != nil {
+	var response struct {
+		Procedure Procedure `json:"procedure"`
+	}
+	if err := json.NewDecoder(rsp.Body).Decode(&response); err != nil {
 		return nil, err
 	}
-	return &proc, nil
+	return &response.Procedure, nil
 }

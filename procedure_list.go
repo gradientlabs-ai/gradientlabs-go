@@ -3,8 +3,8 @@ package client
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
+	"net/url"
 )
 
 type ProcedureListParams struct {
@@ -28,11 +28,15 @@ type ProcedureListResponse struct {
 // Note: requires a `Management` API key.
 func (c *Client) ListProcedures(ctx context.Context, p *ProcedureListParams) (*ProcedureListResponse, error) {
 	path := "procedures"
-	if p.Cursor != "" {
-		path = fmt.Sprintf("%v?cursor=%v", path, p.Cursor)
+	query := url.Values{}
+	if p != nil && p.Cursor != "" {
+		query.Set("cursor", p.Cursor)
 	}
-	if p.Status != "" {
-		path = fmt.Sprintf("%v?status=%v", path, p.Status)
+	if p != nil && p.Status != "" {
+		query.Set("status", string(p.Status))
+	}
+	if len(query) > 0 {
+		path += "?" + query.Encode()
 	}
 
 	rsp, err := c.makeRequest(ctx, http.MethodGet, path, nil)

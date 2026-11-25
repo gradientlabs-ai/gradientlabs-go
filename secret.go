@@ -26,9 +26,22 @@ type Secret struct {
 // need periodic renewal.
 type RefreshMechanismHTTP struct {
 	// RequestDefinition specifies the HTTP request to make to refresh the secret.
-	RequestDefinition HTTPDefinition `json:"request_definition"`
+	RequestDefinition SecretRefreshRequest `json:"request_definition"`
 
 	// ResponseParamName is the JSON field name in the response that contains
 	// the new secret value.
 	ResponseParamName string `json:"response_param_name"`
+}
+
+// SecretRefreshRequest describes the HTTP call that refreshes a secret.
+type SecretRefreshRequest struct {
+	Method          string              `json:"method"`
+	URLTemplate     string              `json:"url_template"`
+	HeaderTemplates map[string]string   `json:"header_templates,omitempty"`
+	Body            *HTTPBodyDefinition `json:"body,omitempty"`
+	Retry           *SecretRefreshRetry `json:"retry,omitempty"`
+}
+
+type SecretRefreshRetry struct {
+	RequestTimeoutSeconds *int `json:"request_timeout_seconds,omitempty"`
 }

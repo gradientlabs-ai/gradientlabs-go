@@ -7,4 +7,8 @@ type HandOffTarget struct {
 
 	// Name is the hand-off target’s name.
 	Name string `json:"name"`
+
+	// Ref is a short reference for this hand-off target that never changes.
+	// It is unique within your company.
+	Ref string `json:"ref"`
 }

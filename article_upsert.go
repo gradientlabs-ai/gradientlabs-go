@@ -43,6 +43,16 @@ type UpsertArticleParams struct {
 
 	// LastEdited is when the article was last changed.
 	LastEdited time.Time `json:"last_edited"`
+
+	// PublicURL optionally links to where this article can be read online.
+	PublicURL string `json:"public_url"`
+
+	// KnowledgeBaseIDs lists the knowledge bases this article belongs to, by
+	// the IDs you gave them (see CreateKnowledgeBase). Knowledge bases control
+	// which AI agents can use the article. The list can't be empty. If you
+	// leave it out, the article goes into the default "public-api" knowledge
+	// base, and an update that leaves it out moves the article there.
+	KnowledgeBaseIDs []string `json:"knowledge_base_ids,omitempty"`
 }
 
 // UpsertArticle inserts or updates a help article

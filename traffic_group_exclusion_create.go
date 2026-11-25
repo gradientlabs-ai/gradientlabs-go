@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 // CreateTrafficGroupExclusionParams are the parameters to Client.CreateTrafficGroupExclusion.
@@ -23,7 +24,7 @@ type CreateTrafficGroupExclusionParams struct {
 //
 // Note: requires a Management API key.
 func (c *Client) CreateTrafficGroupExclusion(ctx context.Context, p *CreateTrafficGroupExclusionParams) (*TrafficGroupTarget, error) {
-	rsp, err := c.makeRequest(ctx, http.MethodPost, fmt.Sprintf("traffic-groups/%s/exclusions", p.GroupID), p)
+	rsp, err := c.makeRequest(ctx, http.MethodPost, fmt.Sprintf("traffic-groups/%s/exclusions", url.PathEscape(p.GroupID)), p)
 	if err != nil {
 		return nil, err
 	}

@@ -4,10 +4,19 @@ package client
 type SupportPlatform string
 
 const (
-	SupportPlatformFreshchat  SupportPlatform = "freshchat"
-	SupportPlatformFreshdesk  SupportPlatform = "freshdesk"
-	SupportPlatformIntercom   SupportPlatform = "intercom"
-	SupportPlatformPublicAPI  SupportPlatform = "public-api"
-	SupportPlatformSalesforce SupportPlatform = "salesforce"
-	SupportPlatformZendesk    SupportPlatform = "zendesk"
+	SupportPlatformChatSDK       SupportPlatform = "chat-sdk"
+	SupportPlatformDixa          SupportPlatform = "dixa"
+	SupportPlatformFreshchat     SupportPlatform = "freshchat"
+	SupportPlatformFreshdesk     SupportPlatform = "freshdesk"
+	SupportPlatformGmail         SupportPlatform = "gmail"
+	SupportPlatformIntercom      SupportPlatform = "intercom"
+	SupportPlatformIntercomVoice SupportPlatform = "intercom-voice"
+	SupportPlatformKustomer      SupportPlatform = "kustomer"
+	SupportPlatformLivechat      SupportPlatform = "livechat"
+	SupportPlatformLiveKit       SupportPlatform = "livekit"
+	SupportPlatformPublicAPI     SupportPlatform = "public-api"
+	SupportPlatformSalesforce    SupportPlatform = "salesforce"
+	SupportPlatformTalkdesk      SupportPlatform = "talkdesk"
+	SupportPlatformTwilio        SupportPlatform = "twilio"
+	SupportPlatformZendesk       SupportPlatform = "zendesk"
 )

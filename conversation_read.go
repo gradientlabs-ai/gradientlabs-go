@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 type ReadParams struct {
@@ -17,12 +18,12 @@ type ReadParams struct {
 }
 
 func (c *Client) ReadConversation(ctx context.Context, conversationID string, p *ReadParams) (*Conversation, error) {
-	url := fmt.Sprintf("conversations/%s/read", conversationID)
-	if p.SupportPlatform != "" {
-		url = fmt.Sprintf("%s?support_platform=%s", url, p.SupportPlatform)
+	path := fmt.Sprintf("conversations/%s/read", url.PathEscape(conversationID))
+	if p != nil && p.SupportPlatform != "" {
+		path = fmt.Sprintf("%s?support_platform=%s", path, url.QueryEscape(p.SupportPlatform))
 	}
 
-	rsp, err := c.makeRequest(ctx, http.MethodGet, url, nil)
+	rsp, err := c.makeRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}

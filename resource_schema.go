@@ -65,7 +65,8 @@ type Attribute struct {
 	Description string `json:"description"`
 
 	// IsTopLevel is true if the attribute is a top-level field (direct child of the root).
-	IsTopLevel bool `json:"is_top_level"`
+	// The API sends it as `is_root`.
+	IsTopLevel bool `json:"is_root"`
 
 	// Name is the name of the field, e.g.:
 	//   - "id" for `$.id`
