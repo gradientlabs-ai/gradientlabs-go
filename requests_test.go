@@ -429,6 +429,7 @@ func TestHandOffTargetRef(t *testing.T) {
 	if rsp.Targets[0].Ref != "billing-team" {
 		t.Errorf("ref = %q", rsp.Targets[0].Ref)
 	}
+	got.check(t, http.MethodGet, "/hand-off-targets", "")
 
 	c, got = newRecordingClient(t, "")
 	if err := c.UpsertHandOffTarget(context.Background(), &UpsertHandOffTargetParams{ID: "billing", Name: "Billing team", Ref: "billing-team"}); err != nil {
