@@ -25,8 +25,8 @@ type UpdateToolParams struct {
 	Async   *AsyncDefinition          `json:"async,omitempty"`
 }
 
-// UpdateTool creates a new revision of a tool. The name and the type of the
-// tool cannot be changed.
+// UpdateTool updates a webhook, HTTP, async or draft tool.
+// Only draft tools can change kind. Edit repository-managed tools in their files.
 //
 // Note: requires a `Management` API key.
 func (c *Client) UpdateTool(ctx context.Context, p *UpdateToolParams) (*Tool, error) {

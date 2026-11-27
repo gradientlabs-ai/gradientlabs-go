@@ -6,7 +6,7 @@ import (
 	"net/http"
 )
 
-// ListTools retrieves all tools.
+// ListTools lists company tools and enabled MCP tools. Interactive tools are omitted.
 //
 // Note: requires a `Management` API key.
 func (c *Client) ListTools(ctx context.Context) ([]*Tool, error) {
