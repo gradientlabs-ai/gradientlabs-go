@@ -518,7 +518,7 @@ func TestUpdateResourceSourceSendsSchema(t *testing.T) {
 }
 
 func TestCreateToolSendsTheContractFields(t *testing.T) {
-	const response = `{"id":"tool_1","name":"Look up order","description":"d","parameters":[{"name":"file","description":"d","type":"attachment","allowed_sources":["llm","resource"],"transfer_mode":"temporary_url"}],"parameter_sets":[{"discriminator_parameter_name":"kind","discriminator_value":"refund","parameters":[]}],"mcp":{"server_id":"mcpserver_1","external_tool_name":"check"},"draft":false,"async":{"start_execution_tool":{"http":{"method":"POST","url_template":"https://example.test","retry":{"max_attempts":3,"request_timeout_seconds":20}}},"cancel_execution_tool":{"webhook":{"name":"cancel"}},"timeout":30000000000}}`
+	const response = `{"id":"tool_1","name":"Look up order","description":"d","parameters":[{"name":"file","description":"d","type":"attachment","allowed_sources":["llm","resource"],"transfer_mode":"temporary_url"}],"parameter_sets":[{"discriminator_parameter_name":"kind","discriminator_value":"refund","parameters":[]}],"draft":false,"async":{"start_execution_tool":{"http":{"method":"POST","url_template":"https://example.test","retry":{"max_attempts":3,"request_timeout_seconds":20}}},"cancel_execution_tool":{"webhook":{"name":"cancel"}},"timeout":30000000000}}`
 	c, got := newRecordingClient(t, response)
 
 	retries := 3
@@ -541,9 +541,6 @@ func TestCreateToolSendsTheContractFields(t *testing.T) {
 	got.check(t, http.MethodPost, "/tools", "")
 	got.checkBody(t, `{"name":"Look up order","description":"d","branch_name":"copy-tools","parameters":[{"name":"file","description":"d","type":"attachment","allowed_sources":["llm","resource"],"transfer_mode":"temporary_url"}],"http":{"method":"POST","url_template":"https://example.test","retry":{"max_attempts":3}}}`)
 
-	if tool.MCP == nil || tool.MCP.ServerID != "mcpserver_1" || tool.MCP.ExternalToolName != "check" {
-		t.Errorf("mcp = %+v", tool.MCP)
-	}
 	if len(tool.ParameterSets) != 1 || tool.ParameterSets[0].DiscriminatorValue != "refund" {
 		t.Errorf("parameter sets = %+v", tool.ParameterSets)
 	}
@@ -646,4 +643,18 @@ func TestToolParameterLists(t *testing.T) {
 		t.Fatal(err)
 	}
 	got.checkBody(t, `{"description":"","parameter_sets":[]}`)
+}
+
+func TestListToolsReturnsMCPConfiguration(t *testing.T) {
+	c, _ := newRecordingClient(t, `{"tools":[{"id":"tool_1","name":"lookup","description":"Look up an order","parameters":[],"mcp":{"server_id":"mcpserver_1","external_tool_name":"lookup_order"}}]}`)
+	tools, err := c.ListTools(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tools) != 1 || tools[0].MCP == nil {
+		t.Fatalf("expected one MCP tool, got %+v", tools)
+	}
+	if got := tools[0].MCP; got.ServerID != "mcpserver_1" || got.ExternalToolName != "lookup_order" {
+		t.Errorf("mcp = %+v", got)
+	}
 }

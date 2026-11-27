@@ -14,7 +14,7 @@ type ReadToolParams struct {
 	Version int
 }
 
-// ReadTool retrieves a tool.
+// ReadTool retrieves a tool. Enabled MCP tools can be read by ID. Interactive tools return 404.
 //
 // Pass a non-nil p to supply optional parameters such as a specific version.
 // Pass nil (or a zero-value ReadToolParams) to retrieve the latest version.
