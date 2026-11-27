@@ -12,6 +12,13 @@ const (
 	// ProcedureStatusLive indicates the procedure is live and will be used in real
 	// conversations.
 	ProcedureStatusLive ProcedureStatus = "live"
+
+	// ProcedureStatusUnsaved indicates the procedure has changes that have not
+	// been saved yet.
+	ProcedureStatusUnsaved ProcedureStatus = "unsaved"
+
+	// ProcedureStatusArchived indicates the procedure has been archived.
+	ProcedureStatusArchived ProcedureStatus = "archived"
 )
 
 type UserDetails struct {
@@ -31,9 +38,6 @@ type Procedure struct {
 
 	// Status is the overall status of the procedure.
 	Status ProcedureStatus `json:"status"`
-
-	// Author is the user who originally created the procedure.
-	Author *UserDetails `json:"author"`
 
 	// Created is the time at which the procedure was originally created.
 	Created time.Time `json:"created"`

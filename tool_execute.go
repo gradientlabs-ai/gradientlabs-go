@@ -18,9 +18,15 @@ type Argument struct {
 }
 
 type ExecutionParams struct {
-	ID string `json:"id"`
+	// ID identifies the tool to execute. It is sent in the URL, not the body.
+	ID string `json:"-"`
 
 	Arguments []Argument `json:"arguments"`
+
+	// Token is an optional conversation-scoped token. When the tool is set up
+	// to send one in its authorization header, the tool call only succeeds if
+	// you provide it here.
+	Token string `json:"token,omitempty"`
 }
 
 type ExecuteResult struct {

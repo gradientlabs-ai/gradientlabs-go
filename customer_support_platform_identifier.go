@@ -29,6 +29,14 @@ const (
 	// CustomerSupportPlatformIdentifierTypeSalesforceAccountID indicates the
 	// identifier is a Salesforce account ID.
 	CustomerSupportPlatformIdentifierTypeSalesforceAccountID CustomerSupportPlatformIdentifierType = "salesforce_account_id"
+
+	// CustomerSupportPlatformIdentifierTypeSalesforceContactEmail indicates
+	// the identifier is the email address of a Salesforce contact.
+	CustomerSupportPlatformIdentifierTypeSalesforceContactEmail CustomerSupportPlatformIdentifierType = "salesforce_contact_email"
+
+	// CustomerSupportPlatformIdentifierTypeSalesforceSuppliedEmail indicates
+	// the identifier is the email address supplied on a Salesforce case.
+	CustomerSupportPlatformIdentifierTypeSalesforceSuppliedEmail CustomerSupportPlatformIdentifierType = "salesforce_supplied_email"
 )
 
 // CustomerSupportPlatformIdentifier links the customer being created to their

@@ -82,7 +82,16 @@ type Conversation struct {
 	// in this conversation.
 	IsActive bool `json:"agent_is_active"`
 
-	// AgentMetadata contains several fields that come from the agent.
+	// LatestIntent is the most recent intent detected by the AI agent.
+	LatestIntent string `json:"latest_intent,omitempty"`
+
+	// LatestHandOffTarget is the hand-off target linked to the most recently
+	// detected intent: where the conversation would be routed for that intent.
+	// It does not mean a hand-off has happened.
+	LatestHandOffTarget string `json:"latest_handoff_target,omitempty"`
+
+	// AgentMetadata contains metadata about how the AI agent processed this
+	// conversation.
 	AgentMetadata *AgentMetadata `json:"latest_agent_metadata,omitempty"`
 }
 

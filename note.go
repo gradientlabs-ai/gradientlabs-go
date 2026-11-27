@@ -52,4 +52,9 @@ type Note struct {
 
 	// Status describes whether the note is draft, live, or deleted.
 	Status NoteStatus `json:"status"`
+
+	// Attributes says which customers the note applies to, as a map from
+	// attribute key to the attribute values it applies to. It is empty for a
+	// note that applies to every conversation.
+	Attributes map[string][]string `json:"attributes,omitempty"`
 }

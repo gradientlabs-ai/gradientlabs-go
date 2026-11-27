@@ -26,4 +26,8 @@ type VoiceCallContext struct {
 
 	// GradientLabsURL is a link to the call conversation in the Gradient Labs UI.
 	GradientLabsURL string `json:"gradient_labs_url,omitempty"`
+
+	// LiveHandoffURL is a link a human agent opens to take over the call. Only
+	// set when the call is being handed off live, or for the test phone number.
+	LiveHandoffURL string `json:"live_handoff_url,omitempty"`
 }

@@ -7,6 +7,11 @@ import (
 	"net/http"
 )
 
+// ResourceSchemaUpdate supplies a new JSON Schema for a resource source.
+type ResourceSchemaUpdate struct {
+	Raw json.RawMessage `json:"raw,omitempty"`
+}
+
 // ResourceSourceUpdateParams represents the request to update an existing resource source.
 type ResourceSourceUpdateParams struct {
 	DisplayName           *string                    `json:"display_name,omitempty"`
@@ -15,6 +20,10 @@ type ResourceSourceUpdateParams struct {
 	HTTPConfig            *ResourceHTTPDefinition    `json:"http_config,omitempty"`
 	WebhookConfig         *ResourceWebhookDefinition `json:"webhook_config,omitempty"`
 	AttributeDescriptions map[string]string          `json:"attribute_descriptions,omitempty"`
+
+	// Schema is a new structure for the data this resource source provides. It
+	// replaces the current schema. Leave it out to keep the current schema.
+	Schema *ResourceSchemaUpdate `json:"schema,omitempty"`
 }
 
 // UpdateResourceSource updates an existing resource source.

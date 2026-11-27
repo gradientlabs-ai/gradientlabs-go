@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 // CreateTrafficGroupTargetParams are the parameters to Client.CreateTrafficGroupTarget.
@@ -23,7 +24,7 @@ type CreateTrafficGroupTargetParams struct {
 //
 // Note: requires a `Management` API key.
 func (c *Client) CreateTrafficGroupTarget(ctx context.Context, p *CreateTrafficGroupTargetParams) (*TrafficGroupTarget, error) {
-	rsp, err := c.makeRequest(ctx, http.MethodPost, fmt.Sprintf("traffic-groups/%s/targets", p.GroupID), p)
+	rsp, err := c.makeRequest(ctx, http.MethodPost, fmt.Sprintf("traffic-groups/%s/targets", url.PathEscape(p.GroupID)), p)
 	if err != nil {
 		return nil, err
 	}

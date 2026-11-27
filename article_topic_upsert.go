@@ -35,6 +35,9 @@ type UpsertArticleTopicParams struct {
 
 	// LastEdited is when the topic was last changed.
 	LastEdited time.Time `json:"last_edited"`
+
+	// PublicURL optionally links to where this topic can be browsed online.
+	PublicURL string `json:"public_url"`
 }
 
 func (c *Client) UpsertArticleTopic(ctx context.Context, p *UpsertArticleTopicParams) error {

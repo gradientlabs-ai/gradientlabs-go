@@ -54,8 +54,23 @@ const (
 	// be executed (e.g., while following a procedure)
 	WebhookTypeActionExecute WebhookType = "action.execute"
 
-	// WebhookTypeResourcePull indicates that the agent wants to pull a resource.
+	// Deprecated: resource requests now arrive as action.execute events.
 	WebhookTypeResourcePull WebhookType = "resource.pull"
+
+	// WebhookTypeConversationStart indicates the agent wants you to open an
+	// outbound conversation. Reply with a ConversationStartResponse.
+	WebhookTypeConversationStart WebhookType = "conversation.start"
+
+	// WebhookTypeBackOfficeTaskComplete indicates the agent completed a
+	// back-office task.
+	WebhookTypeBackOfficeTaskComplete WebhookType = "back-office-task.complete"
+
+	// WebhookTypeBackOfficeTaskHandOff indicates the agent handed a back-office
+	// task off to a person.
+	WebhookTypeBackOfficeTaskHandOff WebhookType = "back-office-task.hand-off"
+
+	// WebhookTypeBackOfficeTaskFail indicates a back-office task failed.
+	WebhookTypeBackOfficeTaskFail WebhookType = "back-office-task.fail"
 )
 
 // Webhook is an event delivered to your webhook endpoint.
@@ -102,9 +117,36 @@ func (w Webhook) ActionExecute() (*ActionExecuteEvent, bool) {
 	return e, ok
 }
 
-// ResourcePull returns the data for an `resource.pull` event.
+// ResourcePull reads a legacy resource request.
+// Deprecated: resource requests now arrive as action.execute events.
 func (w Webhook) ResourcePull() (*ResourcePullEvent, bool) {
 	e, ok := w.Data.(*ResourcePullEvent)
+	return e, ok
+}
+
+// ConversationStart returns the data for a `conversation.start` event.
+func (w Webhook) ConversationStart() (*ConversationStartEvent, bool) {
+	e, ok := w.Data.(*ConversationStartEvent)
+	return e, ok
+}
+
+// BackOfficeTaskComplete returns the data for a `back-office-task.complete`
+// event.
+func (w Webhook) BackOfficeTaskComplete() (*BackOfficeTaskCompleteEvent, bool) {
+	e, ok := w.Data.(*BackOfficeTaskCompleteEvent)
+	return e, ok
+}
+
+// BackOfficeTaskHandOff returns the data for a `back-office-task.hand-off`
+// event.
+func (w Webhook) BackOfficeTaskHandOff() (*BackOfficeTaskHandOffEvent, bool) {
+	e, ok := w.Data.(*BackOfficeTaskHandOffEvent)
+	return e, ok
+}
+
+// BackOfficeTaskFail returns the data for a `back-office-task.fail` event.
+func (w Webhook) BackOfficeTaskFail() (*BackOfficeTaskFailEvent, bool) {
+	e, ok := w.Data.(*BackOfficeTaskFailEvent)
 	return e, ok
 }
 
@@ -131,6 +173,10 @@ type AgentMessageEvent struct {
 	// Holding-responses are sent to let the customer know that the agent is working on a full response.
 	// For example: "I'm sorry to hear you want to close your account. Let me take a look at the next steps for you..."
 	IsHolding bool `json:"is_holding,omitempty"`
+
+	// LastCustomerMessageID is the ID of the customer's latest message that
+	// this message answers, if any.
+	LastCustomerMessageID string `json:"last_customer_message_id,omitempty"`
 }
 
 // ConversationHandOffEvent contains the data for a `conversation.hand_off` event.
@@ -179,7 +225,12 @@ type ActionExecuteEvent struct {
 	Params json.RawMessage `json:"params"`
 
 	// Conversation contains the details of the conversation the event relates to.
+	// It is empty when the action runs for a back-office task.
 	Conversation WebhookConversation `json:"conversation"`
+
+	// BackOfficeTask is the back-office task the action runs for. It is nil when
+	// the action runs in a conversation.
+	BackOfficeTask *WebhookBackOfficeTask `json:"back_office_task,omitempty"`
 }
 
 // ResourcePullEvent contains the data for a `resource.pull` event.
@@ -188,7 +239,72 @@ type ResourcePullEvent struct {
 	ResourceType string `json:"resource_type"`
 
 	// Conversation contains the details of the conversation the event relates to.
+	// It is empty when the resource is read for a back-office task.
 	Conversation WebhookConversation `json:"conversation"`
+
+	// BackOfficeTask is the back-office task the resource is read for. It is nil
+	// when the resource is read for a conversation.
+	BackOfficeTask *WebhookBackOfficeTask `json:"back_office_task,omitempty"`
+}
+
+// ConversationStartEvent contains the data for a `conversation.start` event,
+// which asks you to open an outbound conversation. Reply with a
+// ConversationStartResponse.
+type ConversationStartEvent struct {
+	// CustomerID is your identifier for the customer to contact.
+	CustomerID string `json:"customer_id"`
+
+	// Channel is how to contact the customer.
+	Channel Channel `json:"channel"`
+
+	// Body is the first message to send to the customer.
+	Body string `json:"body"`
+
+	// Subject is the subject line, for email conversations. It is empty on other
+	// channels.
+	Subject string `json:"subject"`
+
+	// InitiatorID says who started the outbound conversation: "public-api" when
+	// you started it through the API. When the AI agent started it from another
+	// conversation or a back-office task, this is the Gradient Labs ID of that
+	// conversation or task, not your ID for it.
+	InitiatorID string `json:"initiator_id"`
+}
+
+// ConversationStartResponse is the body your endpoint returns to a
+// `conversation.start` event.
+type ConversationStartResponse struct {
+	// ConversationID is your identifier for the conversation you opened. Use it
+	// in later API calls about this conversation.
+	ConversationID string `json:"conversation_id"`
+}
+
+// BackOfficeTaskCompleteEvent contains the data for a
+// `back-office-task.complete` event.
+type BackOfficeTaskCompleteEvent struct {
+	// BackOfficeTask is the task that was completed.
+	BackOfficeTask BackOfficeTask `json:"back_office_task"`
+}
+
+// BackOfficeTaskHandOffEvent contains the data for a
+// `back-office-task.hand-off` event.
+type BackOfficeTaskHandOffEvent struct {
+	// BackOfficeTask is the task that was handed off.
+	BackOfficeTask BackOfficeTask `json:"back_office_task"`
+}
+
+// BackOfficeTaskFailEvent contains the data for a `back-office-task.fail`
+// event.
+type BackOfficeTaskFailEvent struct {
+	// BackOfficeTask is the task that failed.
+	BackOfficeTask BackOfficeTask `json:"back_office_task"`
+}
+
+// WebhookBackOfficeTask names the back-office task a tool or resource request
+// comes from.
+type WebhookBackOfficeTask struct {
+	// ID is your identifier for the back-office task.
+	ID string `json:"id"`
 }
 
 // WebhookConversation contains the details of the conversation the webhook
@@ -199,6 +315,14 @@ type WebhookConversation struct {
 
 	// CustomerID is your chosen identifier for the customer.
 	CustomerID string `json:"customer_id"`
+
+	// CustomerSource says where the customer's identifier came from. Only set on
+	// `action.execute` and `resource.pull` events.
+	CustomerSource string `json:"customer_source,omitempty"`
+
+	// Metadata is the metadata you attached to the conversation. Only set on
+	// `action.execute` and `resource.pull` events.
+	Metadata json.RawMessage `json:"metadata,omitempty"`
 }
 
 // ParseWebhook parses the request, verifies its signature, and returns the
@@ -248,8 +372,32 @@ func (c *Client) ParseWebhook(req *http.Request) (webhook *Webhook, token string
 			return nil, "", err
 		}
 		payload.Webhook.Data = &pull
+	case WebhookTypeConversationStart:
+		var start ConversationStartEvent
+		if err := json.Unmarshal(payload.Data, &start); err != nil {
+			return nil, "", err
+		}
+		payload.Webhook.Data = &start
+	case WebhookTypeBackOfficeTaskComplete:
+		var done BackOfficeTaskCompleteEvent
+		if err := json.Unmarshal(payload.Data, &done); err != nil {
+			return nil, "", err
+		}
+		payload.Webhook.Data = &done
+	case WebhookTypeBackOfficeTaskHandOff:
+		var ho BackOfficeTaskHandOffEvent
+		if err := json.Unmarshal(payload.Data, &ho); err != nil {
+			return nil, "", err
+		}
+		payload.Webhook.Data = &ho
+	case WebhookTypeBackOfficeTaskFail:
+		var fail BackOfficeTaskFailEvent
+		if err := json.Unmarshal(payload.Data, &fail); err != nil {
+			return nil, "", err
+		}
+		payload.Webhook.Data = &fail
 	default:
-		return nil, "", fmt.Errorf("unknown webhook event type received: %q", payload.Type)
+		return nil, "", fmt.Errorf("%w: %q", ErrUnknownWebhookType, payload.Type)
 	}
 
 	// Extract the optional sensitive token from the request header.

@@ -17,6 +17,10 @@ const (
 	// the company's employees. For example, it is a procedure or SOP
 	// that customers do not have access to.
 	VisibilityInternal Visibility = "internal"
+
+	// VisibilityUnknown means the visibility could not be determined. It only
+	// appears on topics that Gradient Labs read from a support platform.
+	VisibilityUnknown Visibility = "unknown"
 )
 
 // PublicationStatus describes the status of a help article.
@@ -29,4 +33,12 @@ const (
 
 	// PublicationStatusPublished means that the article is published.
 	PublicationStatusPublished PublicationStatus = "published"
+
+	// PublicationStatusDeleted means that the article was removed from your
+	// help centre.
+	PublicationStatusDeleted PublicationStatus = "deleted"
+
+	// PublicationStatusExcluded means that the article still exists, but the
+	// AI agent should not use it.
+	PublicationStatusExcluded PublicationStatus = "excluded"
 )

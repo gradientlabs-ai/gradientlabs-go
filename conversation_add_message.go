@@ -70,14 +70,17 @@ type AddMessageParams struct {
 	Subject string `json:"subject,omitempty"`
 
 	// ParticipantID identifies the message sender.
-	ParticipantID string `json:"participant_id"`
+	ParticipantID string `json:"participant_id,omitempty"`
 
 	// ParticipantType identifies the type of participant who sent this message.
-	// This cannot be set to ParticipantTypeAI.
+	// AI agent messages can only be replayed.
 	ParticipantType ParticipantType `json:"participant_type"`
 
 	// Created is the time at which the message was sent.
 	Created time.Time `json:"created"`
+
+	// ConversationToken is sent with subsequent tool and webhook calls.
+	ConversationToken string `json:"conversation_token,omitempty"`
 
 	// Attachments contains any files that were uploaded with this message.
 	Attachments []*Attachment `json:"attachments,omitempty"`
@@ -97,9 +100,6 @@ type Message struct {
 	// Body contains the message text.
 	Body string `json:"body"`
 
-	// Subject is the email subject line. Only applicable for email-channel conversations.
-	Subject string `json:"subject,omitempty"`
-
 	// ParticipantID identifies the message sender.
 	ParticipantID string `json:"participant_id"`
 
@@ -111,16 +111,19 @@ type Message struct {
 
 	// Attachments contains any files that were uploaded with this message.
 	Attachment []*Attachment `json:"attachments,omitempty"`
-
-	// ConversationToken is the raw sensitive token that can be optionally provided in every message.
-	// The latest token of the conversation will be echoed back in future Webhooks, under the header `X-GradientLabs-Token`,
-	// as well as in HTTP Tools using templates.
-	ConversationToken string `json:"conversation_token,omitempty"`
 }
 
 // AddMessage records a message sent by the customer or a human agent.
 func (c *Client) AddMessage(ctx context.Context, conversationID string, p AddMessageParams) (*Message, error) {
-	rsp, err := c.makeRequest(ctx, http.MethodPost, fmt.Sprintf("conversations/%s/messages", conversationID), p)
+	// Preserve the timestamp type callers use while letting the API set an omitted time.
+	body := struct {
+		AddMessageParams
+		Created *time.Time `json:"created,omitempty"`
+	}{AddMessageParams: p}
+	if !p.Created.IsZero() {
+		body.Created = &p.Created
+	}
+	rsp, err := c.makeRequest(ctx, http.MethodPost, fmt.Sprintf("conversations/%s/messages", conversationID), body)
 	if err != nil {
 		return nil, err
 	}
